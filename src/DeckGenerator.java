@@ -28,11 +28,45 @@ public class DeckGenerator extends JFrame
     private JButton gen;
     private JTextField namebox;
 
-    public ArrayList<String> getCardNames()
+    /**
+     * Classe interne pour stocker un nom de carte avec un set code optionnel
+     */
+    private static class CardQuery
+    {
+        final String name;
+        final String setCode;
+
+        CardQuery(String name, String setCode)
+        {
+            this.name = name;
+            this.setCode = setCode;
+        }
+
+        @Override
+        public boolean equals(Object obj)
+        {
+            if (obj instanceof CardQuery)
+            {
+                CardQuery other = (CardQuery) obj;
+                return this.name.equals(other.name) && this.setCodeEquals(other.setCode);
+            }
+            return false;
+        }
+
+        private boolean setCodeEquals(String otherSetCode)
+        {
+            if (this.setCode == null && otherSetCode == null)
+                return true;
+            if (this.setCode == null || otherSetCode == null)
+                return false;
+            return this.setCode.equals(otherSetCode);
+        }
+    }
+
+    public ArrayList<CardQuery> getCardNames()
     {
         String decklist = jt.getText();
-
-        ArrayList<String> added = new ArrayList<>();
+        ArrayList<CardQuery> added = new ArrayList<>();
 
         for (String cardname : decklist.split("\n"))
         {
@@ -49,9 +83,29 @@ public class DeckGenerator extends JFrame
                 cardname = cardname.split("\t")[1];
             }
 
-            if (!added.contains(cardname) && !ignore.contains(cardname.toLowerCase()))
+            String setCode = null;
+            // Extraire le set code des parenthèses (ex: "Sol Ring (RNA)")
+            if (cardname.matches(".*\\s*\\([A-Z0-9]{1,3}\\)\\s*"))
             {
-                added.add(cardname);
+                int lastParen = cardname.lastIndexOf('(');
+                if (lastParen != -1)
+                {
+                    int closeParen = cardname.indexOf(')', lastParen);
+                    if (closeParen != -1)
+                    {
+                        setCode = cardname.substring(lastParen + 1, closeParen).trim();
+                        cardname = cardname.substring(0, lastParen).trim();
+                    }
+                }
+            }
+
+            if (!cardname.isEmpty() && !ignore.contains(cardname.toLowerCase()))
+            {
+                CardQuery cq = new CardQuery(cardname, setCode);
+                if (!added.contains(cq))
+                {
+                    added.add(cq);
+                }
             }
         }
         return added;
@@ -104,8 +158,45 @@ public class DeckGenerator extends JFrame
         new File(SavedConfig.getSubPath("decks")).mkdirs();
         File f = new File(SavedConfig.getCustomSetPath("decks", namebox.getText()));
 
-        ArrayList<String> names = getCardNames();
-        ArrayList<Card> cards = MTGCardQuery.toCardList(names, true);
+        ArrayList<CardQuery> cardQueries = getCardNames();
+        ArrayList<Card> cards = new ArrayList<>();
+
+        // Convertir les CardQuery en noms pour la recherche initiale
+        ArrayList<String> names = new ArrayList<>();
+        for (CardQuery cq : cardQueries)
+        {
+            names.add(cq.name);
+        }
+
+        // Obtenir toutes les versions de chaque carte
+        ArrayList<Card> allCards = MTGCardQuery.toCardList(names, true);
+
+        // Filtrer par set code si spécifié
+        for (CardQuery cq : cardQueries)
+        {
+            for (Card card : allCards)
+            {
+                if (card.getName().equalsIgnoreCase(cq.name))
+                {
+                    // Si un set code est spécifié, vérifier qu'il correspond
+                    if (cq.setCode != null && !cq.setCode.isEmpty())
+                    {
+                        if (card.getSetCode().equalsIgnoreCase(cq.setCode))
+                        {
+                            cards.add(card);
+                            break; // Arrêter à la première correspondance exacte
+                        }
+                    }
+                    else
+                    {
+                        // Pas de set code spécifié, ajouter la carte
+                        cards.add(card);
+                        break; // Prendre la première version trouvée
+                    }
+                }
+            }
+        }
+
         final OperationBar bar = RecogApp.INSTANCE.getOpBar();
         if (bar.setTask("Generating Deck...", cards.size()))
         {
